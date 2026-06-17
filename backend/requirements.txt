@@ -1,0 +1,11 @@
+asgiref==3.11.1
+Django==6.0.6
+django-cors-headers==4.9.0
+djangorestframework==3.17.1
+gunicorn==23.0.0
+polyline==2.0.4
+psycopg2-binary==2.9.12
+python-dateutil==2.9.0.post0
+python-dotenv==1.2.2
+requests==2.34.2
+svgwrite==1.4.3
