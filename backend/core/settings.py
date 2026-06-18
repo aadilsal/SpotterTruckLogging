@@ -105,8 +105,35 @@ WSGI_APPLICATION = "core.wsgi.application"
 # Database
 # https://docs.djangoproject.com/en/6.0/ref/settings/#databases
 
-DATABASES = {
-    'default': {
+def _database_from_url(url: str) -> dict:
+    from urllib.parse import parse_qs, unquote, urlparse
+
+    # psycopg2 accepts postgresql://; some hosts provide postgres://
+    if url.startswith('postgres://'):
+        url = 'postgresql://' + url[len('postgres://'):]
+
+    parsed = urlparse(url)
+    query = parse_qs(parsed.query)
+    host = parsed.hostname or ''
+
+    config = {
+        'ENGINE': 'django.db.backends.postgresql',
+        'NAME': unquote(parsed.path.lstrip('/')),
+        'USER': unquote(parsed.username or ''),
+        'PASSWORD': unquote(parsed.password or ''),
+        'HOST': host,
+        'PORT': str(parsed.port or 5432),
+    }
+
+    sslmode = query.get('sslmode', [None])[0]
+    if sslmode or host not in {'localhost', '127.0.0.1', 'db'}:
+        config['OPTIONS'] = {'sslmode': sslmode or 'require'}
+
+    return config
+
+
+def _local_database_config() -> dict:
+    return {
         'ENGINE': 'django.db.backends.postgresql',
         'NAME': os.environ.get('POSTGRES_DB', 'eld_planner'),
         'USER': os.environ.get('POSTGRES_USER', 'postgres'),
@@ -114,7 +141,37 @@ DATABASES = {
         'HOST': os.environ.get('POSTGRES_HOST', '127.0.0.1'),
         'PORT': os.environ.get('POSTGRES_PORT', '5434'),
     }
-}
+
+
+def _resolve_database_config() -> dict:
+    database_url = os.environ.get('DATABASE_URL')
+    if database_url:
+        return {'default': _database_from_url(database_url)}
+
+    pg_host = os.environ.get('PGHOST')
+    if pg_host:
+        return {
+            'default': {
+                'ENGINE': 'django.db.backends.postgresql',
+                'NAME': os.environ.get('PGDATABASE', os.environ.get('POSTGRES_DB', 'eld_planner')),
+                'USER': os.environ.get('PGUSER', os.environ.get('POSTGRES_USER', 'postgres')),
+                'PASSWORD': os.environ.get('PGPASSWORD', os.environ.get('POSTGRES_PASSWORD', '')),
+                'HOST': pg_host,
+                'PORT': os.environ.get('PGPORT', os.environ.get('POSTGRES_PORT', '5432')),
+            }
+        }
+
+    if not DEBUG and os.environ.get('RENDER'):
+        raise RuntimeError(
+            'DATABASE_URL is not set. In Render: open your PostgreSQL service, '
+            'copy the Internal Database URL, add it as DATABASE_URL on the web service, '
+            'or use Environment → Link Database.'
+        )
+
+    return {'default': _local_database_config()}
+
+
+DATABASES = _resolve_database_config()
 
 
 # Password validation

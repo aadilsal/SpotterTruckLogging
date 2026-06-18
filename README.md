@@ -35,6 +35,8 @@ The application calculates the most optimal truck-legal route between destinatio
 
 Once both servers are running, visit `http://localhost:5173/` in your browser.
 
+For production deployment (frontend on **Vercel**, backend on **Render**), see [DEPLOYMENT.md](./DEPLOYMENT.md).
+
 ## Project Structure
 - `/backend/` - Django application and HOS routing engine
 - `/frontend/` - React application and beautiful UI components
