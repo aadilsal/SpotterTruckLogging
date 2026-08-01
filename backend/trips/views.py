@@ -1,4 +1,5 @@
 from rest_framework import viewsets, status
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from .models import Trip
 from .serializers import TripSerializer
@@ -12,10 +13,15 @@ from datetime import timedelta
 class TripViewSet(viewsets.ModelViewSet):
     queryset = Trip.objects.all()
     serializer_class = TripSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        return Trip.objects.filter(owner=self.request.user).order_by('-created_at')
 
     def create(self, request, *args, **kwargs):
         data = request.data
         trip = Trip(
+            owner=request.user,
             current_location=data.get('current_location'),
             pickup_location=data.get('pickup_location'),
             dropoff_location=data.get('dropoff_location'),

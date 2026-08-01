@@ -1,6 +1,14 @@
+from django.conf import settings
 from django.db import models
 
 class Trip(models.Model):
+    owner = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        related_name='trips',
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+    )
     current_location = models.CharField(max_length=255)
     pickup_location = models.CharField(max_length=255)
     dropoff_location = models.CharField(max_length=255)

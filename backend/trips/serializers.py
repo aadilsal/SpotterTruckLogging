@@ -23,6 +23,7 @@ class TripSerializer(serializers.ModelSerializer):
     duty_events = DutyEventSerializer(many=True, read_only=True)
     daily_logs = DailyLogSerializer(many=True, read_only=True)
     compliance = serializers.SerializerMethodField()
+    owner = serializers.PrimaryKeyRelatedField(read_only=True)
 
     class Meta:
         model = Trip

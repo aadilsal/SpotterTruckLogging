@@ -1,12 +1,13 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { useState, useCallback } from 'react';
-import axios from 'axios';
 import MapView from './components/Map.tsx';
 import LogView from './components/LogView.tsx';
-import { apiUrl } from './lib/api';
+import AuthScreen from './components/AuthScreen.tsx';
+import { extractApiError } from './lib/api';
+import { useAuth } from './lib/authContext';
 import {
   Truck, MapPin, Route, FileText, Loader2, Activity,
-  CalendarClock, ShieldCheck, Gauge, Fuel, ScrollText, CheckCircle2, AlertCircle
+  CalendarClock, ShieldCheck, Gauge, Fuel, ScrollText, CheckCircle2, AlertCircle, LogOut
 } from 'lucide-react';
 import ScheduleView from './components/ScheduleView.tsx';
 import ComplianceView from './components/ComplianceView.tsx';
@@ -97,6 +98,18 @@ function FormField({
 }
 
 function App() {
+  const { token } = useAuth();
+
+  // No token in state (fresh load, sign-out, or a 401) => show the login screen.
+  if (!token) {
+    return <AuthScreen />;
+  }
+
+  return <TripPlanner />;
+}
+
+function TripPlanner() {
+  const { api, user, logout } = useAuth();
   const [formData, setFormData] = useState<TripFormData>(INITIAL_FORM);
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [touched, setTouched] = useState<Partial<Record<FormField, boolean>>>({});
@@ -168,17 +181,14 @@ function App() {
         home_terminal_address: formData.home_terminal_address || formData.main_office_address,
       };
 
-      const res = await axios.post(apiUrl('/api/trips/'), payload);
+      const res = await api.post('/api/trips/', payload);
       setTrip(res.data);
       setActiveTab('logs');
     } catch (err: any) {
-      const apiMsg =
-        err.response?.data?.detail ||
-        err.response?.data?.message ||
-        (typeof err.response?.data === 'object'
-          ? Object.values(err.response.data).flat().join(', ')
-          : null);
-      setError(apiMsg || err.message || 'Failed to generate trip. Please check your inputs.');
+      // A 401 already dropped the session; AuthScreen takes over on re-render.
+      if (err.response?.status !== 401) {
+        setError(extractApiError(err, 'Failed to generate trip. Please check your inputs.'));
+      }
     } finally {
       setLoading(false);
     }
@@ -227,6 +237,22 @@ function App() {
             <span className="ml-2 px-2.5 py-1 rounded-full bg-white/[0.04] text-[10px] font-semibold text-zinc-400 border border-white/[0.08] tracking-wide">
               Enterprise
             </span>
+          </div>
+
+          <div className="flex items-center gap-3">
+            {user?.username && (
+              <span className="hidden sm:block text-xs text-zinc-400">
+                Signed in as <span className="text-zinc-200 font-medium">{user.username}</span>
+              </span>
+            )}
+            <button
+              type="button"
+              onClick={logout}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-zinc-400 border border-white/[0.08] bg-white/[0.03] hover:text-zinc-100 hover:bg-white/[0.06] transition-colors"
+            >
+              <LogOut size={13} />
+              Sign out
+            </button>
           </div>
         </div>
       </header>
