@@ -1,0 +1,52 @@
+# Render Blueprint — deploy with New + > Blueprint, pointed at this repo.
+# Values marked sync:false must be filled in on the Render dashboard.
+services:
+  - type: web
+    name: spotter-truck-api
+    runtime: python
+    plan: free
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt && python manage.py collectstatic --noinput
+    startCommand: python manage.py migrate --noinput && gunicorn core.wsgi:application --bind 0.0.0.0:$PORT --workers 2
+    healthCheckPath: /healthz/
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.10
+      - key: DEBUG
+        value: 'false'
+      - key: SECRET_KEY
+        generateValue: true
+      - key: DATABASE_URL
+        fromDatabase:
+          name: spotter-truck-db
+          property: connectionString
+      # Required: without it the API refuses to boot rather than serve
+      # compliance verdicts computed from mock distances.
+      - key: ORS_API_KEY
+        sync: false
+      # Your Vercel domain, e.g. https://spotter-truck-logger.vercel.app
+      - key: ALLOWED_HOSTS
+        sync: false
+      - key: CORS_ALLOWED_ORIGINS
+        sync: false
+      - key: CSRF_TRUSTED_ORIGINS
+        sync: false
+      - key: FRONTEND_URL
+        sync: false
+      - key: CORS_ALLOW_ALL_ORIGINS
+        value: 'false'
+      # Optional SMTP for password reset. Without these, reset links are only
+      # printed to the service logs.
+      - key: EMAIL_HOST
+        sync: false
+      - key: EMAIL_HOST_USER
+        sync: false
+      - key: EMAIL_HOST_PASSWORD
+        sync: false
+      - key: DEFAULT_FROM_EMAIL
+        sync: false
+
+databases:
+  - name: spotter-truck-db
+    databaseName: eld_planner
+    plan: free

@@ -1,5 +1,41 @@
+import logging
+
 import requests
 from django.conf import settings
+
+logger = logging.getLogger(__name__)
+
+
+class RoutingUnavailable(Exception):
+    """Raised when real routing data cannot be produced.
+
+    Better to fail than to hand back canned distances: the whole product is a
+    compliance verdict, and a verdict computed from invented mileage is worse
+    than no verdict at all.
+    """
+
+
+def _mock_allowed() -> bool:
+    """Mock data is only ever acceptable in DEBUG or when explicitly opted into."""
+    api_key = getattr(settings, 'ORS_API_KEY', None)
+    if api_key == 'MOCK':
+        return True
+    return bool(getattr(settings, 'DEBUG', False)) or bool(
+        getattr(settings, 'ALLOW_MOCK_ROUTING', False)
+    )
+
+
+def _require_mock_or_fail(what: str):
+    if not _mock_allowed():
+        raise RoutingUnavailable(
+            f'Routing provider is not configured, so {what} cannot be calculated. '
+            'Set ORS_API_KEY on the server.'
+        )
+    logger.warning(
+        'ORS_API_KEY is not set — returning MOCK %s. Distances, drive times and '
+        'the resulting HOS compliance verdict are NOT real.', what
+    )
+
 
 def get_route(start_coords, end_coords):
     """
@@ -9,7 +45,7 @@ def get_route(start_coords, end_coords):
     """
     api_key = getattr(settings, 'ORS_API_KEY', None)
     if not api_key or api_key == 'MOCK':
-        # Mock response for testing
+        _require_mock_or_fail('route distance')
         return {
             'distance_miles': 1800,
             'duration_hours': 28.5,
@@ -52,6 +88,7 @@ def get_route(start_coords, end_coords):
 def geocode(address):
     api_key = getattr(settings, 'ORS_API_KEY', None)
     if not api_key or api_key == 'MOCK':
+        _require_mock_or_fail(f'coordinates for {address!r}')
         # Mock coordinates
         if 'Dallas' in address: return (-96.7970, 32.7767)
         if 'Chicago' in address: return (-87.6298, 41.8781)
@@ -66,7 +103,13 @@ def geocode(address):
     response = requests.get(url, headers=headers, params=params)
     if response.status_code == 200:
         data = response.json()
-        if data['features']:
+        if data.get('features'):
             coords = data['features'][0]['geometry']['coordinates']
             return tuple(coords)
-    return (0.0, 0.0)
+        raise RoutingUnavailable(
+            f'Could not find a location matching "{address}". '
+            'Try a more specific "City, State" value.'
+        )
+    raise RoutingUnavailable(
+        f'Geocoding failed for "{address}" (provider returned {response.status_code}).'
+    )

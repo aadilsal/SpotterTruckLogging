@@ -13,13 +13,14 @@ https://docs.djangoproject.com/en/6.0/ref/settings/
 from datetime import timedelta
 from pathlib import Path
 import os
+
+from django.core.exceptions import ImproperlyConfigured
 from dotenv import load_dotenv
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 load_dotenv(BASE_DIR / '.env')
-ORS_API_KEY = os.environ.get('ORS_API_KEY')
 
 
 def env_bool(name: str, default: bool = False) -> bool:
@@ -29,17 +30,34 @@ def env_bool(name: str, default: bool = False) -> bool:
     return value.strip().lower() in {'1', 'true', 'yes', 'on'}
 
 
-# Quick-start development settings - unsuitable for production
-# See https://docs.djangoproject.com/en/6.0/howto/deployment/checklist/
+# SECURITY WARNING: defaults to OFF. A forgotten env var must never turn debug
+# on in production, so opt in explicitly with DEBUG=true for local development.
+DEBUG = env_bool('DEBUG', False)
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = os.environ.get(
-    'SECRET_KEY',
-    'django-insecure-)62@kuwiiz7tx6_755pv))w5p8c-vvlrlg_*vi@j0h1d$arwg6',
-)
+# Outside DEBUG this must come from the environment — refuse to boot otherwise
+# rather than silently running on a public, source-controlled key.
+SECRET_KEY = os.environ.get('SECRET_KEY')
+if not SECRET_KEY:
+    if not DEBUG:
+        raise ImproperlyConfigured(
+            'SECRET_KEY is not set. Generate one with '
+            '`python -c "import secrets; print(secrets.token_urlsafe(50))"` '
+            'and set it as an environment variable.'
+        )
+    SECRET_KEY = 'django-insecure-local-development-key-do-not-use-in-production'
 
-# SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = env_bool('DEBUG', True)
+# Routing/geocoding provider. Without a real key the routing layer falls back to
+# canned distances, which would render fabricated HOS compliance verdicts — so a
+# production boot without one is a hard error. 'MOCK' opts in deliberately.
+ORS_API_KEY = os.environ.get('ORS_API_KEY')
+if not ORS_API_KEY and not DEBUG and not env_bool('ALLOW_MOCK_ROUTING', False):
+    raise ImproperlyConfigured(
+        'ORS_API_KEY is not set. Without it the app returns mock distances and '
+        'would present invented compliance results as real. Set a key from '
+        'https://openrouteservice.org/dev/#/signup, or set ALLOW_MOCK_ROUTING=true '
+        'to acknowledge the risk (non-production only).'
+    )
 
 ALLOWED_HOSTS = [
     host.strip()
@@ -70,6 +88,8 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     "corsheaders.middleware.CorsMiddleware",
     "django.middleware.security.SecurityMiddleware",
+    # Serves admin/DRF static files in production without a separate web server.
+    "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -92,6 +112,19 @@ REST_FRAMEWORK = {
     'DEFAULT_PERMISSION_CLASSES': (
         'rest_framework.permissions.IsAuthenticated',
     ),
+    # Blunt abuse limits: credential stuffing and signup spam are the realistic
+    # attacks against an unauthenticated JSON API.
+    'DEFAULT_THROTTLE_CLASSES': (
+        'rest_framework.throttling.AnonRateThrottle',
+        'rest_framework.throttling.UserRateThrottle',
+        'rest_framework.throttling.ScopedRateThrottle',
+    ),
+    'DEFAULT_THROTTLE_RATES': {
+        'anon': os.environ.get('THROTTLE_ANON', '60/hour'),
+        'user': os.environ.get('THROTTLE_USER', '1000/hour'),
+        'auth': os.environ.get('THROTTLE_AUTH', '10/hour'),
+        'trip_create': os.environ.get('THROTTLE_TRIP_CREATE', '60/hour'),
+    },
 }
 
 SIMPLE_JWT = {
@@ -191,6 +224,12 @@ def _resolve_database_config() -> dict:
 
 DATABASES = _resolve_database_config()
 
+# Reuse connections between requests; Render's Postgres is a network hop away
+# and a fresh TCP+TLS handshake per request is a meaningful cost.
+for _db in DATABASES.values():
+    _db.setdefault('CONN_MAX_AGE', int(os.environ.get('DB_CONN_MAX_AGE', 60)))
+    _db.setdefault('CONN_HEALTH_CHECKS', True)
+
 
 # Password validation
 # https://docs.djangoproject.com/en/6.0/ref/settings/#auth-password-validators
@@ -227,3 +266,70 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/6.0/howto/static-files/
 
 STATIC_URL = "static/"
+STATIC_ROOT = BASE_DIR / 'staticfiles'
+STORAGES = {
+    'default': {'BACKEND': 'django.core.files.storage.FileSystemStorage'},
+    'staticfiles': {'BACKEND': 'whitenoise.storage.CompressedManifestStaticFilesStorage'},
+}
+
+DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+
+# Security — only enforced outside DEBUG so local http development still works.
+
+if not DEBUG:
+    # Render/Vercel terminate TLS upstream, so trust their forwarded scheme.
+    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+    SECURE_SSL_REDIRECT = env_bool('SECURE_SSL_REDIRECT', True)
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+    SECURE_HSTS_SECONDS = int(os.environ.get('SECURE_HSTS_SECONDS', 60 * 60 * 24 * 30))
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_HSTS_PRELOAD = True
+    SECURE_CONTENT_TYPE_NOSNIFF = True
+    X_FRAME_OPTIONS = 'DENY'
+
+CSRF_TRUSTED_ORIGINS = [
+    origin.strip()
+    for origin in os.environ.get('CSRF_TRUSTED_ORIGINS', '').split(',')
+    if origin.strip()
+] or CORS_ALLOWED_ORIGINS
+
+
+# Email — password reset needs a real transport in production. Without SMTP
+# settings the console backend is used, which prints the link to the logs.
+
+EMAIL_HOST = os.environ.get('EMAIL_HOST', '')
+if EMAIL_HOST:
+    EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
+    EMAIL_PORT = int(os.environ.get('EMAIL_PORT', 587))
+    EMAIL_HOST_USER = os.environ.get('EMAIL_HOST_USER', '')
+    EMAIL_HOST_PASSWORD = os.environ.get('EMAIL_HOST_PASSWORD', '')
+    EMAIL_USE_TLS = env_bool('EMAIL_USE_TLS', True)
+else:
+    EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
+
+DEFAULT_FROM_EMAIL = os.environ.get('DEFAULT_FROM_EMAIL', 'no-reply@spottertrucklogger.app')
+# Where the reset link should point — the deployed frontend, not the API.
+FRONTEND_URL = os.environ.get('FRONTEND_URL', 'http://localhost:5173').rstrip('/')
+
+
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'standard': {'format': '{levelname} {asctime} {name} {message}', 'style': '{'},
+    },
+    'handlers': {
+        'console': {'class': 'logging.StreamHandler', 'formatter': 'standard'},
+    },
+    'root': {
+        'handlers': ['console'],
+        'level': os.environ.get('LOG_LEVEL', 'INFO'),
+    },
+    'loggers': {
+        'django.request': {'handlers': ['console'], 'level': 'WARNING', 'propagate': False},
+        # svglib logs every unsupported style attribute at DEBUG; far too noisy.
+        'svglib': {'handlers': ['console'], 'level': 'WARNING', 'propagate': False},
+    },
+}

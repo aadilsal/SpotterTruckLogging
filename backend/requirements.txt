@@ -12,3 +12,4 @@ reportlab==5.0.0
 requests==2.34.2
 svglib==2.1.0
 svgwrite==1.4.3
+whitenoise==6.11.0

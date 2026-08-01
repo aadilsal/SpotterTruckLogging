@@ -27,4 +27,6 @@ for attempt in range(1, max_attempts + 1):
 PY
 
 python manage.py migrate --noinput
+# Required: whitenoise's manifest storage needs the collected static manifest.
+python manage.py collectstatic --noinput
 exec gunicorn core.wsgi:application --bind 0.0.0.0:8000 --workers 2

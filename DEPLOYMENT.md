@@ -93,25 +93,58 @@ Render will detect `backend/Dockerfile` automatically.
 
 | Key | Value | Notes |
 |-----|-------|-------|
-| `DEBUG` | `false` | Required for production |
-| `SECRET_KEY` | *(your generated key)* | Never commit this |
+| `DEBUG` | `false` | Defaults to `false`; set explicitly anyway |
+| `SECRET_KEY` | *(your generated key)* | **App refuses to boot without it.** Never commit |
 | `ALLOWED_HOSTS` | `spotter-truck-api.onrender.com` | Replace with your actual Render hostname after creation |
 | `DATABASE_URL` | *(Internal Database URL from Step 1.1)* | Render provides this; app reads it automatically |
-| `ORS_API_KEY` | *(your OpenRouteService key)* | Required for trip routing |
+| `ORS_API_KEY` | *(your OpenRouteService key)* | **App refuses to boot without it** — see warning below |
 | `CORS_ALLOW_ALL_ORIGINS` | `false` | Lock down CORS in production |
 | `CORS_ALLOWED_ORIGINS` | `https://YOUR-APP.vercel.app` | Set after Vercel deploy (Step 2.4) |
+| `CSRF_TRUSTED_ORIGINS` | `https://YOUR-APP.vercel.app` | Defaults to the CORS list if unset |
+| `FRONTEND_URL` | `https://YOUR-APP.vercel.app` | Used to build password-reset links |
+
+Optional — password reset emails. Without these, reset links are only printed to the Render logs:
+
+| Key | Example | Notes |
+|-----|---------|-------|
+| `EMAIL_HOST` | `smtp.sendgrid.net` | Presence of this switches on real SMTP |
+| `EMAIL_PORT` | `587` | |
+| `EMAIL_HOST_USER` | `apikey` | |
+| `EMAIL_HOST_PASSWORD` | *(your SMTP password)* | |
+| `DEFAULT_FROM_EMAIL` | `no-reply@yourdomain.com` | |
+
+> ### ⚠️ Why the app refuses to boot without `ORS_API_KEY`
+>
+> Without a routing key the backend falls back to **canned distances** (a fixed
+> 1800 mi / 28.5 hr for every trip). It would still render a confident
+> "HOS compliant" verdict — computed entirely from invented mileage. For a
+> product whose whole purpose is telling a dispatcher whether a trip is legal,
+> that is worse than an outage, so a non-DEBUG boot without a key is a hard
+> error. If you knowingly want mock data in a **staging** environment, set
+> `ALLOW_MOCK_ROUTING=true`. Never set it in production.
 
 5. Click **Create Web Service**
 
-6. Wait for the first deploy (5–10 minutes). The `entrypoint.sh` script runs migrations automatically.
+6. Wait for the first deploy (5–10 minutes). The `entrypoint.sh` script runs migrations and `collectstatic` automatically.
 
-7. When deploy succeeds, open:
+7. When deploy succeeds, check the health endpoint first — it verifies the database is actually reachable:
+
+   ```
+   https://spotter-truck-api.onrender.com/healthz/
+   ```
+
+   Expect `{"status": "ok", "database": "ok"}`. Then:
 
    ```
    https://spotter-truck-api.onrender.com/api/trips/
    ```
 
-   You should see `[]` or a JSON list (HTTP 200). If you get **502**, check **Logs** in Render.
+   You should now see **401 Unauthorized** (`{"detail":"Authentication credentials were not provided."}`) — that is correct, the API requires a JWT. If you get **502**, check **Logs** in Render.
+
+> **Faster alternative:** this repo ships a `render.yaml` blueprint. Use
+> **New +** → **Blueprint**, point it at the repo, and Render creates the
+> database and web service with most variables pre-wired. You still supply
+> `ORS_API_KEY`, `ALLOWED_HOSTS`, `CORS_ALLOWED_ORIGINS`, and `FRONTEND_URL`.
 
 ### Step 1.3 — Render free tier behavior
 
@@ -211,13 +244,33 @@ If the UI loads but trip generation fails:
 ### Backend (Render)
 
 ```env
-DEBUG=false
+# Required — the app will not start without these
 SECRET_KEY=your-long-random-secret
+ORS_API_KEY=your-openrouteservice-key
+
+DEBUG=false
 ALLOWED_HOSTS=spotter-truck-api.onrender.com
 DATABASE_URL=postgresql://user:pass@host/dbname
-ORS_API_KEY=your-openrouteservice-key
 CORS_ALLOW_ALL_ORIGINS=false
 CORS_ALLOWED_ORIGINS=https://your-app.vercel.app
+CSRF_TRUSTED_ORIGINS=https://your-app.vercel.app
+FRONTEND_URL=https://your-app.vercel.app
+
+# Optional — password reset email (omit to log links instead of sending them)
+EMAIL_HOST=smtp.sendgrid.net
+EMAIL_PORT=587
+EMAIL_HOST_USER=apikey
+EMAIL_HOST_PASSWORD=your-smtp-password
+DEFAULT_FROM_EMAIL=no-reply@yourdomain.com
+
+# Optional — tuning (shown with their defaults)
+LOG_LEVEL=INFO
+DB_CONN_MAX_AGE=60
+THROTTLE_ANON=60/hour
+THROTTLE_USER=1000/hour
+THROTTLE_AUTH=10/hour
+THROTTLE_TRIP_CREATE=60/hour
+SECURE_SSL_REDIRECT=true
 ```
 
 ### Frontend (Vercel)
@@ -226,15 +279,20 @@ CORS_ALLOWED_ORIGINS=https://your-app.vercel.app
 VITE_API_URL=https://spotter-truck-api.onrender.com
 ```
 
-### Local development (unchanged)
+### Local development
 
 ```env
-# backend/.env
-ORS_API_KEY=your-key
+# backend/.env — see .env.example for the full list
+DEBUG=true
+POSTGRES_HOST=127.0.0.1
+POSTGRES_PORT=5434
+# Omit ORS_API_KEY locally to use mock routing (allowed only because DEBUG=true).
+# The server logs a loud warning on every mocked call.
 
-# frontend — optional, defaults to same-origin / localhost proxy
-VITE_API_URL=http://localhost:8000
+# frontend — not needed; `npm run dev` proxies /api to localhost:8000
 ```
+
+Start local Postgres with `docker compose up -d db`.
 
 ---
 

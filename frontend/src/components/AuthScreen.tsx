@@ -1,7 +1,10 @@
 import { useState } from 'react';
-import { AlertCircle, Loader2, LogIn, ShieldCheck, Truck, UserPlus } from 'lucide-react';
+import axios from 'axios';
+import {
+  AlertCircle, ArrowLeft, CheckCircle2, Loader2, LogIn, ShieldCheck, Truck, UserPlus,
+} from 'lucide-react';
 import { useAuth } from '../lib/authContext';
-import { extractApiError } from '../lib/api';
+import { apiUrl, extractApiError } from '../lib/api';
 import { cn } from '../lib/utils';
 
 type Mode = 'login' | 'register';
@@ -9,8 +12,113 @@ type Mode = 'login' | 'register';
 const inputBase =
   'w-full bg-zinc-900/80 border rounded-xl px-3.5 py-2.5 text-sm text-zinc-100 outline-none transition-all placeholder:text-zinc-600 focus:ring-2';
 
+/** "Forgot password" request form. Kept on the same screen so there is no router dependency. */
+function ForgotPassword({ onBack }: { onBack: () => void }) {
+  const [email, setEmail] = useState('');
+  const [sent, setSent] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    if (!email.trim()) {
+      setError('Enter the email address on your account');
+      return;
+    }
+    setLoading(true);
+    try {
+      await axios.post(apiUrl('/api/auth/password-reset/'), { email: email.trim() });
+      setSent(true);
+    } catch (err) {
+      setError(extractApiError(err, 'Could not send the reset email.'));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (sent) {
+    return (
+      <div className="flex flex-col items-center text-center gap-4 py-2">
+        <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20">
+          <CheckCircle2 className="text-emerald-400" size={22} />
+        </div>
+        <div>
+          <p className="text-sm text-zinc-200 font-medium">Check your email</p>
+          <p className="text-xs text-zinc-500 mt-1.5 leading-relaxed">
+            If an account exists for that address, a reset link is on its way. The link expires
+            shortly and can only be used once.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={onBack}
+          className="flex items-center gap-1.5 text-xs font-medium text-blue-400 hover:text-blue-300 transition-colors"
+        >
+          <ArrowLeft size={12} />
+          Back to sign in
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <form onSubmit={handleSubmit} noValidate className="flex flex-col gap-4">
+      <div>
+        <h2 className="text-sm font-semibold text-zinc-100">Reset your password</h2>
+        <p className="text-[11px] text-zinc-500 mt-1">
+          We'll email you a link to choose a new one.
+        </p>
+      </div>
+
+      <div className="space-y-1.5">
+        <label htmlFor="reset-email" className="text-xs font-medium text-zinc-400">
+          Email
+        </label>
+        <input
+          id="reset-email"
+          type="email"
+          autoComplete="email"
+          value={email}
+          onChange={e => setEmail(e.target.value)}
+          placeholder="jane@carrier.com"
+          className={cn(
+            inputBase,
+            'border-white/[0.08] focus:border-blue-500/50 focus:ring-blue-500/20 focus:bg-zinc-900'
+          )}
+        />
+      </div>
+
+      {error && (
+        <div className="flex items-start gap-2 p-3 bg-red-500/10 border border-red-500/20 rounded-xl text-red-400 text-sm">
+          <AlertCircle size={16} className="shrink-0 mt-0.5" />
+          <span>{error}</span>
+        </div>
+      )}
+
+      <button
+        type="submit"
+        disabled={loading}
+        className="w-full bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-500 hover:to-blue-400 text-white font-semibold py-3 rounded-xl transition-all flex items-center justify-center gap-2 disabled:opacity-50 shadow-lg shadow-blue-600/25 active:scale-[0.98]"
+      >
+        {loading ? <Loader2 className="animate-spin" size={18} /> : 'Send reset link'}
+      </button>
+
+      <button
+        type="button"
+        onClick={onBack}
+        className="flex items-center justify-center gap-1.5 text-xs font-medium text-zinc-500 hover:text-zinc-300 transition-colors"
+      >
+        <ArrowLeft size={12} />
+        Back to sign in
+      </button>
+    </form>
+  );
+}
+
 export default function AuthScreen() {
   const { login, register, sessionExpired } = useAuth();
+  const [forgot, setForgot] = useState(false);
 
   const [mode, setMode] = useState<Mode>('login');
   const [username, setUsername] = useState('');
@@ -85,6 +193,10 @@ export default function AuthScreen() {
         </div>
 
         <div className="rounded-2xl border border-white/[0.08] bg-zinc-950/60 backdrop-blur-sm p-6 gradient-border">
+          {forgot ? (
+            <ForgotPassword onBack={() => setForgot(false)} />
+          ) : (
+          <>
           <div className="inline-flex w-full items-center gap-1 p-1 mb-6 rounded-xl bg-white/[0.04] border border-white/[0.06]">
             {(['login', 'register'] as const).map(item => (
               <button
@@ -195,7 +307,19 @@ export default function AuthScreen() {
                 'Sign in'
               )}
             </button>
+
+            {!isRegister && (
+              <button
+                type="button"
+                onClick={() => setForgot(true)}
+                className="text-xs font-medium text-zinc-500 hover:text-blue-400 transition-colors"
+              >
+                Forgot your password?
+              </button>
+            )}
           </form>
+          </>
+          )}
         </div>
 
         <p className="mt-6 flex items-center justify-center gap-1.5 text-[11px] text-zinc-600">

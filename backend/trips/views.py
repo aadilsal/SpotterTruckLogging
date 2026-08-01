@@ -1,3 +1,4 @@
+from django.db.models import Count
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404
 from rest_framework import viewsets, status
@@ -5,22 +6,43 @@ from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from .models import Trip
-from .serializers import TripSerializer
-from routing.services import get_route, geocode
+from .serializers import TripListSerializer, TripSerializer
+from routing.services import RoutingUnavailable, get_route, geocode
 from hos.engine import HOSEngine
 from logs.renderer import LogRenderer
 from logs.models import DailyLog
 from logs.pdf import LogPdfError, log_pdf_filename, render_logs_pdf
 import json
+import logging
 from datetime import timedelta
+
+logger = logging.getLogger(__name__)
 
 class TripViewSet(viewsets.ModelViewSet):
     queryset = Trip.objects.all()
     serializer_class = TripSerializer
     permission_classes = [IsAuthenticated]
 
+    def get_throttles(self):
+        # Trip creation hits an external routing API and runs the HOS engine,
+        # so it gets a tighter budget than ordinary reads.
+        self.throttle_scope = 'trip_create' if self.action == 'create' else None
+        return super().get_throttles()
+
     def get_queryset(self):
-        return Trip.objects.filter(owner=self.request.user).order_by('-created_at')
+        queryset = Trip.objects.filter(owner=self.request.user).order_by('-created_at')
+        if self.action == 'list':
+            # Compliance is recomputed per trip from its duty events, so pull
+            # them in one query instead of one per row.
+            return queryset.prefetch_related('duty_events').annotate(
+                log_count=Count('daily_logs', distinct=True)
+            )
+        return queryset
+
+    def get_serializer_class(self):
+        if self.action == 'list':
+            return TripListSerializer
+        return TripSerializer
 
     def create(self, request, *args, **kwargs):
         data = request.data
@@ -35,27 +57,29 @@ class TripViewSet(viewsets.ModelViewSet):
             home_terminal_address=data.get('home_terminal_address', ''),
             truck_number=data.get('truck_number', '')
         )
-        trip.save()
 
-        # 1. Geocode
-        curr_coords = geocode(trip.current_location)
-        pick_coords = geocode(trip.pickup_location)
-        drop_coords = geocode(trip.dropoff_location)
-
-        # 2. Routing
+        # Geocode and route BEFORE saving: a trip with no distance is useless,
+        # and persisting one would leave a broken row in the user's history.
         try:
+            curr_coords = geocode(trip.current_location)
+            pick_coords = geocode(trip.pickup_location)
+            drop_coords = geocode(trip.dropoff_location)
+
             route1 = get_route(curr_coords, pick_coords)
             route2 = get_route(pick_coords, drop_coords)
-            
-            trip.distance_miles = route1['distance_miles'] + route2['distance_miles']
-            trip.estimated_hours = route1['duration_hours'] + route2['duration_hours']
-            
-            # Combine geometry
-            combined_geom = route1['geometry'] + route2['geometry']
-            trip.route_geometry = json.dumps(combined_geom)
-            trip.save()
-        except Exception as e:
-            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        except RoutingUnavailable as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as exc:
+            logger.exception('Routing provider call failed')
+            return Response(
+                {'detail': f'The routing provider could not be reached: {exc}'},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+        trip.distance_miles = route1['distance_miles'] + route2['distance_miles']
+        trip.estimated_hours = route1['duration_hours'] + route2['duration_hours']
+        trip.route_geometry = json.dumps(route1['geometry'] + route2['geometry'])
+        trip.save()
 
         # 3. HOS Engine
         engine = HOSEngine(trip)

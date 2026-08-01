@@ -1,13 +1,20 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import MapView from './components/Map.tsx';
 import LogView from './components/LogView.tsx';
 import AuthScreen from './components/AuthScreen.tsx';
+import ResetPasswordScreen from './components/ResetPasswordScreen.tsx';
+import ProfileModal from './components/ProfileModal.tsx';
+import TripHistory from './components/TripHistory.tsx';
 import { extractApiError } from './lib/api';
 import { useAuth } from './lib/authContext';
 import {
+  applyProfileToForm, fetchProfile, hasSavedDefaults, type DriverProfile,
+} from './lib/profile';
+import {
   Truck, MapPin, Route, FileText, Loader2, Activity,
-  CalendarClock, ShieldCheck, Gauge, Fuel, ScrollText, CheckCircle2, AlertCircle, LogOut
+  CalendarClock, ShieldCheck, Gauge, Fuel, ScrollText, CheckCircle2, AlertCircle, LogOut,
+  Building2, Clock, Pencil
 } from 'lucide-react';
 import ScheduleView from './components/ScheduleView.tsx';
 import ComplianceView from './components/ComplianceView.tsx';
@@ -28,15 +35,16 @@ const TABS = [
   { id: 'compliance', label: 'Compliance', icon: ShieldCheck },
 ] as const;
 
+// Carrier fields start empty: they are filled from the user's saved profile.
 const INITIAL_FORM: TripFormData = {
   current_location: 'Dallas, TX',
   pickup_location: 'Chicago, IL',
   dropoff_location: 'Los Angeles, CA',
   cycle_used: '45',
-  carrier_name: 'Nexus Transport LLC',
-  main_office_address: '123 Logistics Way, Dallas, TX',
-  home_terminal_address: '123 Logistics Way, Dallas, TX',
-  truck_number: 'TRK-9000',
+  carrier_name: '',
+  main_office_address: '',
+  home_terminal_address: '',
+  truck_number: '',
 };
 
 const inputBase =
@@ -97,8 +105,34 @@ function FormField({
   );
 }
 
+/** Read the reset link's query params once, before any auth decision. */
+function readResetParams(): { uid: string; token: string } | null {
+  if (typeof window === 'undefined') return null;
+  const params = new URLSearchParams(window.location.search);
+  const uid = params.get('uid');
+  const token = params.get('token');
+  if (!uid || !token) return null;
+  return { uid, token };
+}
+
 function App() {
   const { token } = useAuth();
+  const [resetParams, setResetParams] = useState(readResetParams);
+
+  // Arriving from a password reset email takes priority over the login screen.
+  if (resetParams) {
+    return (
+      <ResetPasswordScreen
+        uid={resetParams.uid}
+        token={resetParams.token}
+        onDone={() => {
+          // Drop the one-time token from the URL so a refresh doesn't reuse it.
+          window.history.replaceState({}, '', window.location.pathname);
+          setResetParams(null);
+        }}
+      />
+    );
+  }
 
   // No token in state (fresh load, sign-out, or a 401) => show the login screen.
   if (!token) {
@@ -119,6 +153,54 @@ function TripPlanner() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [activeTab, setActiveTab] = useState('map');
+
+  const [profile, setProfile] = useState<DriverProfile | null>(null);
+  const [showProfile, setShowProfile] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
+
+  // Load saved carrier defaults once per session and pre-fill the form.
+  useEffect(() => {
+    let cancelled = false;
+    fetchProfile(api)
+      .then(saved => {
+        if (cancelled) return;
+        setProfile(saved);
+        setFormData(current => applyProfileToForm(current, saved));
+      })
+      .catch(() => {
+        // A missing profile is not fatal — the form just stays blank.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [api]);
+
+  const handleProfileSaved = (saved: DriverProfile) => {
+    setProfile(saved);
+    setFormData(current => applyProfileToForm(current, saved));
+    // Clear any stale "required" errors the pre-fill just resolved.
+    setFieldErrors(prev => {
+      const next = { ...prev };
+      for (const field of ['carrier_name', 'truck_number', 'main_office_address'] as FormField[]) {
+        if (saved[field as keyof DriverProfile]) delete next[field];
+      }
+      return next;
+    });
+  };
+
+  const openTrip = async (tripId: number) => {
+    setError('');
+    try {
+      const res = await api.get(`/api/trips/${tripId}/`);
+      setTrip(res.data);
+      setActiveTab('logs');
+      setShowHistory(false);
+    } catch (err: any) {
+      if (err.response?.status !== 401) {
+        setError(extractApiError(err, 'Could not open that trip.'));
+      }
+    }
+  };
 
   const showError = useCallback(
     (field: FormField) => submitAttempted || !!touched[field],
@@ -239,12 +321,28 @@ function TripPlanner() {
             </span>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
             {user?.username && (
-              <span className="hidden sm:block text-xs text-zinc-400">
+              <span className="hidden lg:block text-xs text-zinc-400 mr-1">
                 Signed in as <span className="text-zinc-200 font-medium">{user.username}</span>
               </span>
             )}
+            <button
+              type="button"
+              onClick={() => setShowHistory(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-zinc-400 border border-white/[0.08] bg-white/[0.03] hover:text-zinc-100 hover:bg-white/[0.06] transition-colors"
+            >
+              <Clock size={13} />
+              My Trips
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowProfile(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-zinc-400 border border-white/[0.08] bg-white/[0.03] hover:text-zinc-100 hover:bg-white/[0.06] transition-colors"
+            >
+              <Building2 size={13} />
+              Carrier
+            </button>
             <button
               type="button"
               onClick={logout}
@@ -364,6 +462,27 @@ function TripPlanner() {
                   Driver & Carrier
                 </legend>
 
+                <div className="flex items-center justify-between gap-2 p-3 rounded-xl bg-white/[0.03] border border-white/[0.06]">
+                  <div className="min-w-0">
+                    <p className="text-[10px] uppercase tracking-wider text-zinc-500 font-semibold">
+                      Saved defaults
+                    </p>
+                    <p className="text-xs text-zinc-300 truncate mt-0.5">
+                      {hasSavedDefaults(profile)
+                        ? [profile?.carrier_name, profile?.truck_number].filter(Boolean).join(' · ')
+                        : 'None saved yet'}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowProfile(true)}
+                    className="shrink-0 flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-medium text-blue-400 border border-blue-500/20 bg-blue-500/10 hover:bg-blue-500/15 transition-colors"
+                  >
+                    <Pencil size={11} />
+                    {hasSavedDefaults(profile) ? 'Edit' : 'Set up'}
+                  </button>
+                </div>
+
                 <FormField
                   label="Carrier Name"
                   name="carrier_name"
@@ -469,6 +588,22 @@ function TripPlanner() {
           )}
         </main>
       </div>
+
+      {showProfile && (
+        <ProfileModal
+          profile={profile}
+          onClose={() => setShowProfile(false)}
+          onSaved={handleProfileSaved}
+        />
+      )}
+
+      {showHistory && (
+        <TripHistory
+          onClose={() => setShowHistory(false)}
+          onOpenTrip={openTrip}
+          activeTripId={trip?.id}
+        />
+      )}
     </div>
   );
 }

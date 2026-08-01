@@ -3,7 +3,32 @@ from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework import serializers
 
+from .models import DriverProfile
+
 User = get_user_model()
+
+
+class DriverProfileSerializer(serializers.ModelSerializer):
+    is_complete = serializers.BooleanField(read_only=True)
+
+    class Meta:
+        model = DriverProfile
+        fields = (
+            'carrier_name',
+            'truck_number',
+            'main_office_address',
+            'home_terminal_address',
+            'is_complete',
+            'updated_at',
+        )
+        read_only_fields = ('updated_at',)
+
+    def validate(self, attrs):
+        # Trim incidental whitespace so pre-filled values stay clean.
+        for key, value in attrs.items():
+            if isinstance(value, str):
+                attrs[key] = value.strip()
+        return attrs
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -39,3 +64,20 @@ class RegisterSerializer(serializers.ModelSerializer):
             email=validated_data.get('email', ''),
             password=validated_data['password'],
         )
+
+
+class PasswordResetRequestSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+
+
+class PasswordResetConfirmSerializer(serializers.Serializer):
+    uid = serializers.CharField()
+    token = serializers.CharField()
+    new_password = serializers.CharField(write_only=True, style={'input_type': 'password'})
+
+    def validate_new_password(self, value):
+        try:
+            validate_password(value)
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError(list(exc.messages))
+        return value
