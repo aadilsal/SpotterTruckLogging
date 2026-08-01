@@ -1,13 +1,23 @@
 import { useState, useEffect } from 'react';
-import { Download, Loader2, Clock, Moon, Truck, CheckCircle2, XCircle } from 'lucide-react';
-import { jsPDF } from 'jspdf';
-import 'svg2pdf.js';
+import { Download, Loader2, Clock, Moon, Truck, CheckCircle2, XCircle, AlertCircle } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { getDailyCompliance } from '../types/compliance';
+import { useAuth } from '../lib/authContext';
+import { extractApiError } from '../lib/api';
+
+/** Pull the server-provided filename out of Content-Disposition, if present. */
+function filenameFromHeaders(headers: unknown, fallback: string): string {
+  const disposition = (headers as Record<string, string> | undefined)?.['content-disposition'];
+  const match = disposition?.match(/filename="?([^";]+)"?/);
+  return match?.[1] ?? fallback;
+}
 
 export default function LogView({ trip }: { trip: any }) {
+  const { api } = useAuth();
   const [activeLogIndex, setActiveLogIndex] = useState(0);
-  const [downloading, setDownloading] = useState(false);
+  /** null = idle, 'all' = whole trip, otherwise the daily-log id being fetched. */
+  const [downloading, setDownloading] = useState<string | number | null>(null);
+  const [downloadError, setDownloadError] = useState('');
 
   const logs = trip?.daily_logs ?? [];
 
@@ -39,32 +49,56 @@ export default function LogView({ trip }: { trip: any }) {
 
   const logCount = logs.length;
 
-  const handleDownloadPDF = async () => {
+  /** Fetch a PDF from the API (needs the Bearer header, so not a plain <a href>). */
+  const downloadPdf = async (
+    path: string,
+    fallbackName: string,
+    key: string | number
+  ) => {
+    setDownloadError('');
+    setDownloading(key);
     try {
-      setDownloading(true);
-      const doc = new jsPDF('landscape', 'pt', 'a4');
-
-      for (let i = 0; i < logs.length; i++) {
-        if (i > 0) doc.addPage();
-
-        const log = logs[i];
-        const wrapper = document.createElement('div');
-        wrapper.innerHTML = log.svg_content;
-        const svg = wrapper.querySelector('svg');
-
-        if (svg) {
-          await doc.svg(svg, { x: 20, y: 20, width: 800, height: 550 });
+      const res = await api.get(path, { responseType: 'blob' });
+      const url = URL.createObjectURL(res.data as Blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filenameFromHeaders(res.headers, fallbackName);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      const response = (err as { response?: { status?: number; data?: unknown } }).response;
+      // A 401 already dropped the session; the login screen takes over.
+      if (response?.status !== 401) {
+        // Error bodies come back as a Blob on blob requests, so unwrap it to
+        // surface the server's message instead of a generic axios error.
+        let detail: string | undefined;
+        if (response?.data instanceof Blob) {
+          try {
+            detail = JSON.parse(await response.data.text())?.detail;
+          } catch {
+            detail = undefined;
+          }
         }
+        setDownloadError(
+          detail ?? extractApiError(err, 'Could not download the PDF. Please try again.')
+        );
       }
-
-      doc.save(`Trip_${trip.id}_ELD_Logs.pdf`);
-    } catch (e) {
-      console.error('Error generating PDF:', e);
-      alert('Failed to generate PDF. Check console for details.');
     } finally {
-      setDownloading(false);
+      setDownloading(null);
     }
   };
+
+  const downloadAll = () =>
+    downloadPdf(`/api/trips/${trip.id}/logs/pdf/`, `eld-logs-trip-${trip.id}.pdf`, 'all');
+
+  const downloadDay = (log: { id: number }, index: number) =>
+    downloadPdf(
+      `/api/trips/${trip.id}/logs/${log.id}/pdf/`,
+      `eld-log-trip-${trip.id}-day-${index + 1}.pdf`,
+      log.id
+    );
 
   const fmtHours = (val: number | undefined | null) =>
     typeof val === 'number' && !Number.isNaN(val) ? val.toFixed(1) : '0.0';
@@ -116,14 +150,26 @@ export default function LogView({ trip }: { trip: any }) {
             <p className="text-xs text-zinc-500 mt-0.5">{logCount} daily log{logCount !== 1 ? 's' : ''} generated</p>
           </div>
           <button
-            onClick={handleDownloadPDF}
-            disabled={downloading}
+            onClick={downloadAll}
+            disabled={downloading !== null}
             className="flex items-center gap-2 bg-white/[0.06] hover:bg-white/[0.1] text-zinc-200 px-4 py-2.5 rounded-xl border border-white/[0.08] transition-all font-medium text-sm whitespace-nowrap disabled:opacity-50 active:scale-[0.98]"
           >
-            {downloading ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
-            Download PDF
+            {downloading === 'all' ? (
+              <Loader2 size={16} className="animate-spin" />
+            ) : (
+              <Download size={16} />
+            )}
+            Download all {logCount} day{logCount !== 1 ? 's' : ''}
           </button>
         </div>
+        {downloadError && (
+          <div className="max-w-5xl mx-auto px-6 pb-4 -mt-1">
+            <div className="flex items-start gap-2 p-3 bg-red-500/10 border border-red-500/20 rounded-xl text-red-400 text-sm">
+              <AlertCircle size={16} className="shrink-0 mt-0.5" />
+              <span>{downloadError}</span>
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="shrink-0 border-b border-white/[0.06] bg-zinc-950/40">
@@ -132,29 +178,46 @@ export default function LogView({ trip }: { trip: any }) {
             {logs.map((log: any, index: number) => {
               const isActive = safeIndex === index;
               return (
-                <button
+                <div
                   key={index}
-                  onClick={() => setActiveLogIndex(index)}
-                  className={cn(
-                    'flex flex-col items-center py-3 px-4 rounded-xl transition-all duration-200 border text-center min-w-[108px] flex-1 max-w-[140px]',
-                    isActive
-                      ? 'bg-blue-500/15 border-blue-500/40 text-blue-300 shadow-sm shadow-blue-500/10'
-                      : 'bg-white/[0.03] border-white/[0.06] text-zinc-500 hover:bg-white/[0.06] hover:text-zinc-300 hover:border-white/[0.1]'
-                  )}
+                  className="flex flex-col gap-1 min-w-[108px] flex-1 max-w-[140px]"
                 >
-                  <span className={cn('text-xs font-bold', isActive ? 'text-blue-400' : 'text-zinc-400')}>
-                    Day {index + 1}
-                  </span>
-                  <span className="text-[11px] mt-1 tabular-nums">
-                    {log.date ? new Date(log.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '—'}
-                  </span>
-                  <span className={cn(
-                    'text-[10px] mt-1.5 font-medium tabular-nums',
-                    isActive ? 'text-blue-400/80' : 'text-zinc-600'
-                  )}>
-                    {fmtHours(log.total_driving_hours)}h drive
-                  </span>
-                </button>
+                  <button
+                    onClick={() => setActiveLogIndex(index)}
+                    className={cn(
+                      'flex flex-col items-center py-3 px-4 rounded-xl transition-all duration-200 border text-center',
+                      isActive
+                        ? 'bg-blue-500/15 border-blue-500/40 text-blue-300 shadow-sm shadow-blue-500/10'
+                        : 'bg-white/[0.03] border-white/[0.06] text-zinc-500 hover:bg-white/[0.06] hover:text-zinc-300 hover:border-white/[0.1]'
+                    )}
+                  >
+                    <span className={cn('text-xs font-bold', isActive ? 'text-blue-400' : 'text-zinc-400')}>
+                      Day {index + 1}
+                    </span>
+                    <span className="text-[11px] mt-1 tabular-nums">
+                      {log.date ? new Date(log.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '—'}
+                    </span>
+                    <span className={cn(
+                      'text-[10px] mt-1.5 font-medium tabular-nums',
+                      isActive ? 'text-blue-400/80' : 'text-zinc-600'
+                    )}>
+                      {fmtHours(log.total_driving_hours)}h drive
+                    </span>
+                  </button>
+                  <button
+                    onClick={() => downloadDay(log, index)}
+                    disabled={downloading !== null}
+                    title={`Download the Day ${index + 1} log sheet as PDF`}
+                    className="flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-[11px] font-medium text-zinc-500 border border-white/[0.06] bg-white/[0.02] hover:bg-white/[0.06] hover:text-zinc-200 transition-colors disabled:opacity-40"
+                  >
+                    {downloading === log.id ? (
+                      <Loader2 size={12} className="animate-spin" />
+                    ) : (
+                      <Download size={12} />
+                    )}
+                    PDF
+                  </button>
+                </div>
               );
             })}
           </div>

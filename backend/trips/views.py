@@ -1,4 +1,7 @@
+from django.http import HttpResponse
+from django.shortcuts import get_object_or_404
 from rest_framework import viewsets, status
+from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from .models import Trip
@@ -7,6 +10,7 @@ from routing.services import get_route, geocode
 from hos.engine import HOSEngine
 from logs.renderer import LogRenderer
 from logs.models import DailyLog
+from logs.pdf import LogPdfError, log_pdf_filename, render_logs_pdf
 import json
 from datetime import timedelta
 
@@ -62,6 +66,41 @@ class TripViewSet(viewsets.ModelViewSet):
 
         serializer = self.get_serializer(trip)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=['get'], url_path='logs/pdf')
+    def logs_pdf(self, request, pk=None):
+        """Every daily log for the trip, one page each."""
+        trip = self.get_object()
+        logs = trip.daily_logs.exclude(svg_content__isnull=True).exclude(
+            svg_content=''
+        ).order_by('date')
+        return self._pdf_response(
+            logs, log_pdf_filename(trip.id), f'ELD Logs — Trip {trip.id}'
+        )
+
+    @action(detail=True, methods=['get'], url_path=r'logs/(?P<log_id>[0-9]+)/pdf')
+    def log_pdf(self, request, pk=None, log_id=None):
+        """A single day's log sheet."""
+        trip = self.get_object()
+        log = get_object_or_404(trip.daily_logs, pk=log_id)
+        return self._pdf_response(
+            [log],
+            log_pdf_filename(trip.id, log.date),
+            f'Drivers Daily Log — {log.date}',
+        )
+
+    @staticmethod
+    def _pdf_response(logs, filename, title):
+        try:
+            pdf_bytes = render_logs_pdf(logs, title=title)
+        except LogPdfError as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_404_NOT_FOUND)
+
+        response = HttpResponse(pdf_bytes, content_type='application/pdf')
+        response['Content-Disposition'] = f'attachment; filename="{filename}"'
+        # Let the browser read the filename when this is fetched via XHR.
+        response['Access-Control-Expose-Headers'] = 'Content-Disposition'
+        return response
 
     def _generate_logs(self, trip):
         from datetime import timedelta
