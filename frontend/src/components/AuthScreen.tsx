@@ -116,11 +116,17 @@ function ForgotPassword({ onBack }: { onBack: () => void }) {
   );
 }
 
+/** The landing page CTA links to /app?signup=1, so open on the register tab. */
+function initialMode(): Mode {
+  if (typeof window === 'undefined') return 'login';
+  return new URLSearchParams(window.location.search).has('signup') ? 'register' : 'login';
+}
+
 export default function AuthScreen() {
   const { login, register, sessionExpired } = useAuth();
   const [forgot, setForgot] = useState(false);
 
-  const [mode, setMode] = useState<Mode>('login');
+  const [mode, setMode] = useState<Mode>(initialMode);
   const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');

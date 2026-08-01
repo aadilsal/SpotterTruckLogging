@@ -297,31 +297,35 @@ function TripPlanner() {
   ] : [];
 
   return (
-    <div className="h-screen flex flex-col overflow-hidden bg-[#0a0a0c] text-zinc-100 font-sans selection:bg-blue-500/30">
+    <div className="h-screen flex flex-col overflow-hidden bg-[#0a0a0c] text-zinc-100 font-sans selection:bg-blue-500/30 max-lg:h-auto max-lg:min-h-screen max-lg:overflow-visible">
       <div className="pointer-events-none fixed inset-0 z-0">
         <div className="absolute top-0 left-1/4 w-[600px] h-[400px] bg-blue-600/[0.04] rounded-full blur-[120px]" />
         <div className="absolute bottom-0 right-1/4 w-[500px] h-[300px] bg-indigo-600/[0.03] rounded-full blur-[100px]" />
       </div>
 
       <header className="relative z-20 h-14 shrink-0 border-b border-white/[0.06] bg-[#0a0a0c]/80 backdrop-blur-xl">
-        <div className="h-full flex items-center justify-between px-5">
-          <div className="flex items-center gap-3">
-            <div className="relative">
+        <div className="h-full flex items-center justify-between gap-2 px-3 sm:px-5">
+          <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+            <div className="relative shrink-0">
               <div className="absolute inset-0 bg-blue-500/30 rounded-xl blur-md" />
               <div className="relative bg-gradient-to-br from-blue-500 to-blue-700 p-2 rounded-xl shadow-lg shadow-blue-500/20">
                 <Truck size={18} className="text-white" />
               </div>
             </div>
-            <div>
-              <h1 className="text-[15px] font-semibold tracking-tight text-zinc-50">SpotterTruckLogger</h1>
-              <p className="text-[10px] text-zinc-500 font-medium tracking-wide uppercase">FMCSA Compliance Suite</p>
+            <div className="min-w-0">
+              <h1 className="text-[13px] sm:text-[15px] font-semibold tracking-tight text-zinc-50 truncate">
+                SpotterTruckLogger
+              </h1>
+              <p className="hidden sm:block text-[10px] text-zinc-500 font-medium tracking-wide uppercase">
+                FMCSA Compliance Suite
+              </p>
             </div>
-            <span className="ml-2 px-2.5 py-1 rounded-full bg-white/[0.04] text-[10px] font-semibold text-zinc-400 border border-white/[0.08] tracking-wide">
+            <span className="hidden xl:inline-block ml-2 px-2.5 py-1 rounded-full bg-white/[0.04] text-[10px] font-semibold text-zinc-400 border border-white/[0.08] tracking-wide">
               Enterprise
             </span>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
             {user?.username && (
               <span className="hidden lg:block text-xs text-zinc-400 mr-1">
                 Signed in as <span className="text-zinc-200 font-medium">{user.username}</span>
@@ -333,7 +337,7 @@ function TripPlanner() {
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-zinc-400 border border-white/[0.08] bg-white/[0.03] hover:text-zinc-100 hover:bg-white/[0.06] transition-colors"
             >
               <Clock size={13} />
-              My Trips
+              <span className="hidden sm:inline">My Trips</span>
             </button>
             <button
               type="button"
@@ -341,7 +345,7 @@ function TripPlanner() {
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-zinc-400 border border-white/[0.08] bg-white/[0.03] hover:text-zinc-100 hover:bg-white/[0.06] transition-colors"
             >
               <Building2 size={13} />
-              Carrier
+              <span className="hidden sm:inline">Carrier</span>
             </button>
             <button
               type="button"
@@ -349,7 +353,7 @@ function TripPlanner() {
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-zinc-400 border border-white/[0.08] bg-white/[0.03] hover:text-zinc-100 hover:bg-white/[0.06] transition-colors"
             >
               <LogOut size={13} />
-              Sign out
+              <span className="hidden sm:inline">Sign out</span>
             </button>
           </div>
         </div>
@@ -394,8 +398,8 @@ function TripPlanner() {
         </div>
       )}
 
-      <div className="relative z-10 flex flex-1 overflow-hidden">
-        <aside className="w-[360px] shrink-0 flex flex-col border-r border-white/[0.06] bg-zinc-950/60 backdrop-blur-sm">
+      <div className="relative z-10 flex flex-1 flex-col lg:flex-row overflow-y-auto lg:overflow-hidden">
+        <aside className="w-full lg:w-[360px] shrink-0 flex flex-col border-b lg:border-b-0 lg:border-r border-white/[0.06] bg-zinc-950/60 backdrop-blur-sm">
           <div className="px-5 py-4 border-b border-white/[0.06]">
             <div className="flex items-center gap-2.5">
               <div className="p-1.5 rounded-lg bg-blue-500/10 border border-blue-500/20">
@@ -408,7 +412,7 @@ function TripPlanner() {
             </div>
           </div>
 
-          <div className="flex-1 overflow-y-auto custom-scrollbar px-5 py-5">
+          <div className="flex-1 lg:overflow-y-auto custom-scrollbar px-5 py-5">
             <form onSubmit={handleSubmit} noValidate className="flex flex-col gap-6">
               <fieldset className="space-y-3.5">
                 <legend className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-1 px-0.5">
@@ -537,17 +541,17 @@ function TripPlanner() {
           </div>
         </aside>
 
-        <main className="flex-1 flex flex-col overflow-hidden bg-[#0a0a0c]/50">
+        <main className="flex-1 flex flex-col min-h-[60vh] lg:min-h-0 lg:overflow-hidden bg-[#0a0a0c]/50">
           {trip ? (
             <>
-              <div className="shrink-0 px-5 py-3 border-b border-white/[0.06]">
+              <div className="shrink-0 px-5 py-3 border-b border-white/[0.06] overflow-x-auto custom-scrollbar">
                 <div className="inline-flex items-center gap-1 p-1 rounded-xl bg-white/[0.04] border border-white/[0.06]">
                   {TABS.map(tab => (
                     <button
                       key={tab.id}
                       onClick={() => setActiveTab(tab.id)}
                       className={cn(
-                        'flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200',
+                        'flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 whitespace-nowrap',
                         activeTab === tab.id
                           ? 'bg-white/[0.1] text-zinc-50 shadow-sm'
                           : 'text-zinc-500 hover:text-zinc-300'
@@ -560,7 +564,7 @@ function TripPlanner() {
                 </div>
               </div>
 
-              <div className="flex-1 overflow-hidden">
+              <div className="flex-1 min-h-[420px] lg:min-h-0 overflow-hidden">
                 {activeTab === 'map' && <MapView trip={trip} />}
                 {activeTab === 'logs' && <LogView trip={trip} />}
                 {activeTab === 'schedule' && <ScheduleView trip={trip} />}
