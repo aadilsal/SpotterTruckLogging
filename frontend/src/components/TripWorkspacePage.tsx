@@ -216,11 +216,17 @@ export default function TripWorkspacePage() {
         </div>
       </div>
 
-      <div className="flex-1 min-h-[420px] lg:min-h-0 overflow-hidden">
-        {activeTab === 'map' && <MapView trip={trip} />}
-        {activeTab === 'logs' && <LogView trip={trip} />}
-        {activeTab === 'schedule' && <ScheduleView trip={trip} onTripUpdated={setTrip} />}
-        {activeTab === 'compliance' && <ComplianceView trip={trip} />}
+      <div className="flex-1 min-h-[420px] lg:min-h-0 overflow-hidden relative">
+        {/* Absolute-fill instead of h-full: three stacked flex-grow ancestors
+            above this node leave percentage heights unable to resolve in
+            some browsers, so each tab view's own `h-full` root collapses to
+            0. Anchoring via inset-0 sidesteps that percentage chain. */}
+        <div className="absolute inset-0">
+          {activeTab === 'map' && <MapView trip={trip} />}
+          {activeTab === 'logs' && <LogView trip={trip} />}
+          {activeTab === 'schedule' && <ScheduleView trip={trip} onTripUpdated={setTrip} />}
+          {activeTab === 'compliance' && <ComplianceView trip={trip} />}
+        </div>
       </div>
 
       <ConfirmDialog
