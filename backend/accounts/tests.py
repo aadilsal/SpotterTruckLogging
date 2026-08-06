@@ -1,11 +1,17 @@
-from django.contrib.auth import get_user_model
+from typing import TYPE_CHECKING
+
 from django.core import mail
 from django.core.cache import cache
 from rest_framework.test import APITestCase
 
 from accounts.models import DriverProfile
 
-User = get_user_model()
+if TYPE_CHECKING:
+    from django.contrib.auth.models import User
+else:
+    from django.contrib.auth import get_user_model
+
+    User = get_user_model()
 
 PASSWORD = 'RoadTrip!2024'
 

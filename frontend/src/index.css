@@ -2,13 +2,27 @@
 
 @theme {
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
-  --color-surface: #0c0c0e;
+
+  /* Surfaces */
+  --color-surface: #0a0a0c;
   --color-surface-raised: #141416;
   --color-surface-overlay: #1a1a1e;
   --color-border-subtle: rgba(255, 255, 255, 0.06);
   --color-border-default: rgba(255, 255, 255, 0.1);
+
+  /* Brand */
   --color-accent: #3b82f6;
+  --color-accent-hover: #60a5fa;
   --color-accent-muted: rgba(59, 130, 246, 0.12);
+
+  /* Semantic status — used consistently instead of raw emerald/red/amber
+     classes so the verdict colors read the same everywhere in the product. */
+  --color-success: #34d399;
+  --color-success-muted: rgba(52, 211, 153, 0.12);
+  --color-danger: #f87171;
+  --color-danger-muted: rgba(248, 113, 113, 0.12);
+  --color-warning: #fbbf24;
+  --color-warning-muted: rgba(251, 191, 36, 0.12);
 }
 
 * {
@@ -82,4 +96,91 @@ body {
   -webkit-mask-composite: xor;
   mask-composite: exclude;
   pointer-events: none;
+}
+
+/* Faint dot grid — the marketing-site signature backdrop for hero/CTA bands.
+   Lives on ::before (not the section itself) so the fade mask only ever
+   touches the decorative pattern — masking the section directly would mask
+   its real children too, fading headline/CTA content to invisible. */
+.bg-grid {
+  position: relative;
+}
+
+.bg-grid::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image: radial-gradient(rgba(255, 255, 255, 0.08) 1px, transparent 1px);
+  background-size: 28px 28px;
+  -webkit-mask-image: radial-gradient(ellipse 70% 60% at 50% 0%, #000 40%, transparent 100%);
+  mask-image: radial-gradient(ellipse 70% 60% at 50% 0%, #000 40%, transparent 100%);
+}
+
+/* Entrance animation used across marketing sections, staggered per-item so a
+   row of cards reads as one coordinated motion rather than N separate ones. */
+@keyframes fade-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in-up {
+  animation: fade-in-up 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.stagger-1 { animation-delay: 60ms; }
+.stagger-2 { animation-delay: 120ms; }
+.stagger-3 { animation-delay: 180ms; }
+.stagger-4 { animation-delay: 240ms; }
+.stagger-5 { animation-delay: 300ms; }
+
+/* Slow ambient drift for the hero's gradient blobs — barely perceptible,
+   just enough to keep the aurora backdrop from feeling static. */
+@keyframes aurora-drift {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  50% { transform: translate(3%, -4%) scale(1.06); }
+}
+
+.animate-aurora {
+  animation: aurora-drift 20s ease-in-out infinite;
+}
+
+.animate-aurora-delayed {
+  animation: aurora-drift 24s ease-in-out infinite reverse;
+}
+
+/* Continuous scrolling strip (the six FMCSA rules). Duplicated content in
+   markup + -50% translate gives a seamless loop. */
+@keyframes marquee {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+
+.animate-marquee {
+  animation: marquee 26s linear infinite;
+}
+
+.group:hover .animate-marquee {
+  animation-play-state: paused;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-fade-in,
+  .animate-fade-in-up {
+    animation: none !important;
+    opacity: 1 !important;
+    transform: none !important;
+  }
+
+  .animate-aurora,
+  .animate-aurora-delayed,
+  .animate-marquee {
+    animation: none !important;
+  }
 }

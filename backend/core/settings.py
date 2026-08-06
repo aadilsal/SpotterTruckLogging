@@ -167,7 +167,7 @@ def _database_from_url(url: str) -> dict:
     query = parse_qs(parsed.query)
     host = parsed.hostname or ''
 
-    config = {
+    config: dict = {
         'ENGINE': 'django.db.backends.postgresql',
         'NAME': unquote(parsed.path.lstrip('/')),
         'USER': unquote(parsed.username or ''),

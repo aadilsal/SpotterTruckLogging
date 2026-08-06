@@ -1,14 +1,20 @@
-from django.contrib.auth import get_user_model
+from typing import TYPE_CHECKING
+
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework import serializers
 
 from .models import DriverProfile
 
-User = get_user_model()
+if TYPE_CHECKING:
+    from django.contrib.auth.models import User
+else:
+    from django.contrib.auth import get_user_model
+
+    User = get_user_model()
 
 
-class DriverProfileSerializer(serializers.ModelSerializer):
+class DriverProfileSerializer(serializers.ModelSerializer[DriverProfile]):
     is_complete = serializers.BooleanField(read_only=True)
 
     class Meta:
@@ -31,13 +37,13 @@ class DriverProfileSerializer(serializers.ModelSerializer):
         return attrs
 
 
-class UserSerializer(serializers.ModelSerializer):
+class UserSerializer(serializers.ModelSerializer["User"]):
     class Meta:
         model = User
         fields = ('id', 'username', 'email')
 
 
-class RegisterSerializer(serializers.ModelSerializer):
+class RegisterSerializer(serializers.ModelSerializer["User"]):
     password = serializers.CharField(write_only=True, style={'input_type': 'password'})
     email = serializers.EmailField(required=False, allow_blank=True)
 

@@ -12,7 +12,7 @@ createRoot(document.getElementById('root')!).render(
       <AuthProvider>
         <Routes>
           <Route path="/" element={<LandingPage />} />
-          <Route path="/app" element={<App />} />
+          <Route path="/app/*" element={<App />} />
           {/* Password reset links land here; App reads uid/token from the query. */}
           <Route path="/reset-password" element={<App />} />
           <Route path="*" element={<Navigate to="/" replace />} />

@@ -3,30 +3,42 @@ import 'leaflet/dist/leaflet.css';
 import { useEffect } from 'react';
 import L from 'leaflet';
 
+interface TripStop {
+  stop_type: string;
+  location: string | null;
+}
+
+interface MapTrip {
+  route_geometry?: string | null;
+  stops?: TripStop[];
+}
+
+type LngLat = [number, number];
+
 // Fix leafet icon paths
-delete (L.Icon.Default.prototype as any)._getIconUrl;
+delete (L.Icon.Default.prototype as { _getIconUrl?: unknown })._getIconUrl;
 L.Icon.Default.mergeOptions({
   iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon-2x.png',
   iconUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon.png',
   shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
 });
 
-function MapBounds({ route }: { route: any }) {
+function MapBounds({ route }: { route: LngLat[] | null }) {
   const map = useMap();
   useEffect(() => {
     if (route && route.length > 0) {
-      const bounds = L.latLngBounds(route.map((p: any) => [p[1], p[0]]));
+      const bounds = L.latLngBounds(route.map((p) => [p[1], p[0]]));
       map.fitBounds(bounds, { padding: [50, 50] });
     }
   }, [route, map]);
   return null;
 }
 
-export default function MapView({ trip }: { trip: any }) {
-  const routeGeom = trip?.route_geometry ? JSON.parse(trip.route_geometry) : null;
-  
+export default function MapView({ trip }: { trip: MapTrip | null }) {
+  const routeGeom: LngLat[] | null = trip?.route_geometry ? JSON.parse(trip.route_geometry) : null;
+
   // Format coordinate for leaflet: [lat, lng] while ORS returns [lng, lat]
-  const positions = routeGeom ? routeGeom.map((p: number[]) => [p[1], p[0]]) : [];
+  const positions: LngLat[] = routeGeom ? routeGeom.map((p) => [p[1], p[0]]) : [];
 
   return (
     <div className="w-full h-full relative">
@@ -47,7 +59,7 @@ export default function MapView({ trip }: { trip: any }) {
           </>
         )}
 
-        {trip?.stops?.map((stop: any, idx: number) => {
+        {trip?.stops?.map((stop, idx) => {
           if (stop.stop_type === 'PICKUP' && positions.length > 0) {
             return (
               <Marker key={idx} position={positions[0]}>

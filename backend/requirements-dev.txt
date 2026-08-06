@@ -1,0 +1,4 @@
+# Editor/type-checking only — not needed at runtime or in production.
+-r requirements.txt
+django-stubs
+djangorestframework-stubs

@@ -15,11 +15,17 @@ class DutyEvent(models.Model):
     location = models.CharField(max_length=255, null=True, blank=True)
     distance_miles = models.FloatField(default=0.0)
 
+    class Meta:
+        ordering = ['start_time']
+
     def __str__(self):
         return f"{self.status} from {self.start_time} to {self.end_time}"
 
 class DailyLog(models.Model):
     trip = models.ForeignKey(Trip, related_name='daily_logs', on_delete=models.CASCADE)
+    # django-stubs injects trip_id dynamically via its mypy plugin, which pyright
+    # can't use — declare it so the FK-id lookup type-checks under Pylance.
+    trip_id: int
     date = models.DateField()
     total_driving_hours = models.FloatField(default=0.0)
     total_on_duty_hours = models.FloatField(default=0.0)

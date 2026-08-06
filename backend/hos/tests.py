@@ -6,6 +6,7 @@ from django.utils import timezone
 
 from hos.checker import check_compliance
 from hos.engine import HOSEngine
+from hos.reasoning import build_reasoning
 from trips.models import Trip
 
 
@@ -101,3 +102,81 @@ class ComplianceCheckerTests(TestCase):
             report.is_compliant,
             [v.message for r in report.rules for v in r.violations],
         )
+
+    def test_dry_run_engine_does_not_persist(self):
+        """persist=False must simulate the full schedule without writing
+        any DutyEvent/Stop rows, so an unsaved trip works fine too."""
+        trip = Trip(
+            current_location='Dallas, TX',
+            pickup_location='Chicago, IL',
+            dropoff_location='Los Angeles, CA',
+            cycle_used=0.0,
+            distance_miles=1500.0,
+        )
+        engine = HOSEngine(trip, persist=False)
+        engine.run()
+
+        self.assertGreater(len(engine.events), 0)
+        self.assertGreater(len(engine.stops), 0)
+        for event in engine.events:
+            self.assertIsNone(event.pk)
+        for stop in engine.stops:
+            self.assertIsNone(stop.pk)
+
+        # Nothing should have hit the database.
+        from logs.models import DutyEvent as DutyEventModel
+        self.assertEqual(DutyEventModel.objects.count(), 0)
+
+        report = check_compliance(trip, engine.events)
+        self.assertTrue(
+            report.is_compliant,
+            [v.message for r in report.rules for v in r.violations],
+        )
+
+
+class ReasoningTests(TestCase):
+    def _report_with_events(self, events, cycle_used=0.0):
+        trip = Trip(
+            current_location='Dallas, TX',
+            pickup_location='Chicago, IL',
+            dropoff_location='Los Angeles, CA',
+            cycle_used=cycle_used,
+            distance_miles=500.0,
+        )
+        return check_compliance(trip, events)
+
+    def test_compliant_trip_has_no_issues(self):
+        report = self._report_with_events([])
+        reasoning = build_reasoning(report, {'distance_miles': 500.0})
+        self.assertEqual(reasoning['issues'], [])
+        self.assertIn('compliant', reasoning['summary'].lower())
+
+    def test_non_compliant_trip_lists_plain_english_issues(self):
+        start = timezone.now()
+        events = [
+            _event('ON_DUTY_NOT_DRIVING', start, 1),
+            _event('DRIVING', start + timedelta(hours=1), 12),
+        ]
+        report = self._report_with_events(events)
+        reasoning = build_reasoning(report)
+
+        self.assertIn('NOT compliant', reasoning['summary'])
+        self.assertTrue(reasoning['issues'])
+
+        issue = next(
+            i for i in reasoning['issues'] if i['rule_id'] == '11_hour_driving'
+        )
+        self.assertIn('11', issue['plain_explanation'])
+        self.assertTrue(issue['recommendation'])
+        # Every field should be a real sentence, not a bare rule code.
+        self.assertNotEqual(issue['plain_explanation'], '11_hour_driving')
+
+    def test_repeated_violations_are_summarized_not_duplicated(self):
+        start = timezone.now()
+        events = [_event('DRIVING', start, 9)]
+        report = self._report_with_events(events)
+        reasoning = build_reasoning(report)
+        issue = next(
+            i for i in reasoning['issues'] if i['rule_id'] == '30_minute_break'
+        )
+        self.assertTrue(issue['plain_explanation'])

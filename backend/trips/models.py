@@ -2,6 +2,9 @@ from django.conf import settings
 from django.db import models
 
 class Trip(models.Model):
+    # django-stubs injects these dynamically via its mypy plugin, which pyright
+    # can't use — declare them so pk/FK-id lookups type-check under Pylance.
+    id: int
     owner = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         related_name='trips',
@@ -37,6 +40,7 @@ class Stop(models.Model):
         ('OVERNIGHT_REST', 'Overnight Rest'),
     )
     trip = models.ForeignKey(Trip, related_name='stops', on_delete=models.CASCADE)
+    trip_id: int
     stop_type = models.CharField(max_length=20, choices=STOP_TYPES)
     location = models.CharField(max_length=255, null=True, blank=True)
     lat = models.FloatField(null=True, blank=True)

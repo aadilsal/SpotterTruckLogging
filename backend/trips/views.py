@@ -1,20 +1,20 @@
 from django.db.models import Count
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404
-from rest_framework import viewsets, status
+from rest_framework import generics, viewsets, status
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from .models import Trip
-from .serializers import TripListSerializer, TripSerializer
+from .serializers import DutyEventSerializer, TripListSerializer, TripSerializer
 from routing.services import RoutingUnavailable, get_route, geocode
 from hos.engine import HOSEngine
-from logs.renderer import LogRenderer
-from logs.models import DailyLog
+from logs.models import DutyEvent
+from logs.services import regenerate_daily_logs
 from logs.pdf import LogPdfError, log_pdf_filename, render_logs_pdf
 import json
 import logging
-from datetime import timedelta
+from typing import cast
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +45,7 @@ class TripViewSet(viewsets.ModelViewSet):
         return TripSerializer
 
     def create(self, request, *args, **kwargs):
-        data = request.data
+        data = cast(dict, request.data)
         trip = Trip(
             owner=request.user,
             current_location=data.get('current_location'),
@@ -86,7 +86,7 @@ class TripViewSet(viewsets.ModelViewSet):
         engine.run()
 
         # 4. Generate Daily Logs SVGs
-        self._generate_logs(trip)
+        regenerate_daily_logs(trip)
 
         serializer = self.get_serializer(trip)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
@@ -126,69 +126,41 @@ class TripViewSet(viewsets.ModelViewSet):
         response['Access-Control-Expose-Headers'] = 'Content-Disposition'
         return response
 
-    def _generate_logs(self, trip):
-        from datetime import timedelta
-        
-        events = list(trip.duty_events.order_by('start_time'))
-        if not events: return
-        
-        class SplitEvent:
-            def __init__(self, status, start_time, end_time, distance_miles=0.0):
-                self.status = status
-                self.start_time = start_time
-                self.end_time = end_time
-                self.distance_miles = distance_miles
 
-        day_events = {}
-        
-        # 1. Fill leading OFF_DUTY on Day 1
-        first_start = events[0].start_time
-        day1_midnight = first_start.replace(hour=0, minute=0, second=0, microsecond=0)
-        if first_start > day1_midnight:
-            events.insert(0, SplitEvent('OFF_DUTY', day1_midnight, first_start, 0.0))
-            
-        # 2. Fill trailing OFF_DUTY on Last Day
-        last_end = events[-1].end_time
-        last_day_next_midnight = last_end.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
-        if last_end < last_day_next_midnight:
-            events.append(SplitEvent('OFF_DUTY', last_end, last_day_next_midnight, 0.0))
+class DutyEventTripMixin(generics.GenericAPIView):
+    """Scopes duty events to a trip owned by the caller.
 
-        # 3. Split multi-day events at midnight boundaries
-        for ev in events:
-            current_start = ev.start_time
-            remaining_distance = getattr(ev, 'distance_miles', 0.0) or 0.0
-            total_seconds = (ev.end_time - ev.start_time).total_seconds()
-            
-            while current_start < ev.end_time:
-                date = current_start.date()
-                if date not in day_events:
-                    day_events[date] = []
-                    
-                next_day = current_start.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
-                current_end = min(ev.end_time, next_day)
-                
-                chunk_seconds = (current_end - current_start).total_seconds()
-                chunk_distance = remaining_distance * (chunk_seconds / total_seconds) if total_seconds > 0 else 0.0
-                
-                day_events[date].append(SplitEvent(ev.status, current_start, current_end, chunk_distance))
-                
-                current_start = current_end
+    A trip's generated schedule is a starting plan, not a fixed record — a
+    dispatcher edits it to reflect what actually happened (a delay, a skipped
+    break, an extra stop), and every edit regenerates that trip's daily logs
+    so the log sheets and the compliance verdict both stay truthful to the
+    edited schedule.
+    """
 
-        for date in sorted(day_events.keys()):
-            evs = day_events[date]
-            renderer = LogRenderer(date, evs, trip)
-            svg_str = renderer.render()
-            
-            # Calculate totals for the day
-            driving = sum([(e.end_time - e.start_time).total_seconds() / 3600.0 for e in evs if e.status == 'DRIVING'])
-            on_duty = sum([(e.end_time - e.start_time).total_seconds() / 3600.0 for e in evs if e.status == 'ON_DUTY_NOT_DRIVING'])
-            off_duty = sum([(e.end_time - e.start_time).total_seconds() / 3600.0 for e in evs if e.status == 'OFF_DUTY' or e.status == 'SLEEPER_BERTH'])
-            
-            DailyLog.objects.create(
-                trip=trip,
-                date=date,
-                total_driving_hours=driving,
-                total_on_duty_hours=on_duty,
-                total_off_duty_hours=off_duty,
-                svg_content=svg_str
-            )
+    permission_classes = [IsAuthenticated]
+    serializer_class = DutyEventSerializer
+
+    def get_trip(self):
+        return get_object_or_404(Trip, pk=self.kwargs['trip_id'], owner=self.request.user)
+
+    def get_queryset(self):
+        return DutyEvent.objects.filter(trip=self.get_trip()).order_by('start_time')
+
+
+class DutyEventListCreateView(DutyEventTripMixin, generics.ListCreateAPIView):
+    def perform_create(self, serializer):
+        trip = self.get_trip()
+        serializer.save(trip=trip)
+        regenerate_daily_logs(trip)
+
+
+class DutyEventDetailView(DutyEventTripMixin, generics.RetrieveUpdateDestroyAPIView):
+    def perform_update(self, serializer):
+        serializer.save()
+        regenerate_daily_logs(self.get_trip())
+
+    def perform_destroy(self, instance):
+        trip = instance.trip
+        instance.delete()
+        regenerate_daily_logs(trip)
+

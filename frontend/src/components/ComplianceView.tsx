@@ -4,7 +4,7 @@ import { cn } from '../lib/utils';
 import type { ComplianceReport } from '../types/compliance';
 
 interface ComplianceViewProps {
-  trip: any;
+  trip: { compliance?: ComplianceReport } | null;
 }
 
 const ComplianceView: React.FC<ComplianceViewProps> = ({ trip }) => {
@@ -15,6 +15,10 @@ const ComplianceView: React.FC<ComplianceViewProps> = ({ trip }) => {
   const isCompliant = compliance?.is_compliant ?? false;
   const rules = compliance?.rules ?? [];
   const violationCount = compliance?.violation_count ?? 0;
+  const reasoning = compliance?.reasoning;
+  const recommendationByRule = new Map(
+    (reasoning?.issues ?? []).map(issue => [issue.rule_id, issue.recommendation])
+  );
 
   return (
     <div className="flex flex-col h-full overflow-y-auto custom-scrollbar">
@@ -42,8 +46,8 @@ const ComplianceView: React.FC<ComplianceViewProps> = ({ trip }) => {
           <div className={cn(
             'flex items-center gap-4 rounded-2xl px-6 py-4 border',
             isCompliant
-              ? 'bg-emerald-500/[0.08] border-emerald-500/20'
-              : 'bg-red-500/[0.08] border-red-500/20'
+              ? 'bg-emerald-500/8 border-emerald-500/20'
+              : 'bg-red-500/8 border-red-500/20'
           )}>
             <div>
               <div className="text-xs text-zinc-500 font-medium uppercase tracking-wider">Overall Score</div>
@@ -62,6 +66,12 @@ const ComplianceView: React.FC<ComplianceViewProps> = ({ trip }) => {
           </div>
         </div>
 
+        {reasoning?.summary && (
+          <p className="text-sm text-zinc-300 leading-relaxed mb-6 rounded-xl border border-white/6 bg-white/3 px-4 py-3">
+            {reasoning.summary}
+          </p>
+        )}
+
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           {rules.map(rule => (
             <div
@@ -69,8 +79,8 @@ const ComplianceView: React.FC<ComplianceViewProps> = ({ trip }) => {
               className={cn(
                 'rounded-xl p-5 border transition-all',
                 rule.passed
-                  ? 'bg-white/[0.03] border-white/[0.06] hover:bg-white/[0.05]'
-                  : 'bg-red-500/[0.04] border-red-500/20'
+                  ? 'bg-white/3 border-white/6 hover:bg-white/5'
+                  : 'bg-red-500/4 border-red-500/20'
               )}
             >
               <div className="flex items-start gap-3">
@@ -92,6 +102,13 @@ const ComplianceView: React.FC<ComplianceViewProps> = ({ trip }) => {
                     {rule.rule_name}
                   </h3>
                   <p className="text-xs text-zinc-500 leading-relaxed mb-3">{rule.description}</p>
+
+                  {!rule.passed && recommendationByRule.has(rule.rule_id) && (
+                    <p className="text-xs text-emerald-300/90 leading-relaxed mb-3">
+                      <span className="font-medium text-emerald-400">Fix: </span>
+                      {recommendationByRule.get(rule.rule_id)}
+                    </p>
+                  )}
 
                   {!rule.passed && rule.violations.length > 0 && (
                     <div className="space-y-2">

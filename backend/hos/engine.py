@@ -4,18 +4,33 @@ from logs.models import DutyEvent
 from trips.models import Stop
 
 class HOSEngine:
-    def __init__(self, trip, start_time=None):
+    def __init__(self, trip, start_time=None, persist=True):
+        """
+        persist=True (default) is the existing behavior: every DutyEvent/Stop
+        is written to the DB as it's generated, tied to an already-saved trip.
+
+        persist=False runs the exact same simulation entirely in memory —
+        events and stops are built and collected on self.events/self.stops
+        but never saved. This lets a pre-dispatch "check" simulate a full
+        multi-day HOS schedule against an unsaved Trip without creating any
+        DB rows, so a dispatcher can test a trip without it cluttering
+        history or requiring persistence.
+        """
         self.trip = trip
         self.current_time = start_time or timezone.now()
         self.distance_remaining = trip.distance_miles or 0.0
         self.cycle_used = trip.cycle_used
-        
+
         self.duty_window_used = 0.0
         self.driving_since_reset = 0.0
         self.driving_since_break = 0.0
         self.distance_since_fuel = 0.0
-        
+
         self.AVERAGE_SPEED = 60.0  # mph
+
+        self.persist = persist
+        self.events = []
+        self.stops = []
 
     def add_event(self, status, duration_hours, location=None, distance=0.0):
         end_time = self.current_time + timedelta(hours=duration_hours)
@@ -27,20 +42,26 @@ class HOSEngine:
             location=location,
             distance_miles=distance
         )
-        event.save()
+        if self.persist:
+            event.save()
+        self.events.append(event)
         self.current_time = end_time
         return event
 
     def add_stop(self, stop_type, location, duration_hours):
         arrival = self.current_time
         departure = self.current_time + timedelta(hours=duration_hours)
-        Stop.objects.create(
+        stop = Stop(
             trip=self.trip,
             stop_type=stop_type,
             location=location,
             arrival_time=arrival,
             departure_time=departure
         )
+        if self.persist:
+            stop.save()
+        self.stops.append(stop)
+        return stop
 
     def run(self):
         # 1. Pickup

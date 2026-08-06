@@ -1,0 +1,11 @@
+{
+  "python.defaultInterpreterPath": "${workspaceFolder}/backend/venv/Scripts/python.exe",
+  "python.analysis.diagnosticMode": "workspace",
+  "python.analysis.diagnosticSeverityOverrides": {
+    // djangorestframework-stubs' ModelSerializer.Meta uses invariant ClassVars,
+    // so every concrete serializer's `class Meta` is flagged as an incompatible
+    // override even though the runtime attributes (model/fields/etc.) are exactly
+    // what DRF expects. Known upstream stub limitation, not a real bug.
+    "reportIncompatibleVariableOverride": "none"
+  }
+}

@@ -190,10 +190,12 @@ def check_compliance(trip, events: Optional[Iterable[Any]] = None) -> Compliance
         trip: Trip model instance (uses cycle_used for pre-trip on-duty hours).
         events: Optional iterable of duty events; defaults to trip.duty_events ordered by start_time.
     """
+    ordered_events: Sequence[Any]
     if events is None:
-        events = trip.duty_events.order_by('start_time')
+        ordered_events = list(trip.duty_events.order_by('start_time'))
     else:
-        events = sorted(events, key=lambda e: e.start_time)
+        ordered_events = sorted(events, key=lambda e: e.start_time)
+    events = ordered_events
 
     rules = _empty_rules()
     all_violations: List[Violation] = []
@@ -286,6 +288,7 @@ def check_compliance(trip, events: Optional[Iterable[Any]] = None) -> Compliance
 
             if duty_window_start is None:
                 duty_window_start = event.start_time
+            assert duty_window_start is not None
 
             projected_driving = driving_in_shift + duration
             if projected_driving > 11.0 + 1e-6:

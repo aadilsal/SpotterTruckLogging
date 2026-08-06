@@ -1,12 +1,20 @@
-﻿from django.contrib.auth import get_user_model
+﻿from datetime import datetime, timedelta
+from typing import TYPE_CHECKING
+
 from django.core.cache import cache
 from django.test import override_settings
 from rest_framework.test import APITestCase
 
-from logs.models import DailyLog
+from hos.models import DispatchCheck
+from logs.models import DailyLog, DutyEvent
 from trips.models import Trip
 
-User = get_user_model()
+if TYPE_CHECKING:
+    from django.contrib.auth.models import User
+else:
+    from django.contrib.auth import get_user_model
+
+    User = get_user_model()
 
 
 class ThrottleResetAPITestCase(APITestCase):
@@ -98,6 +106,68 @@ class TripOwnershipTests(ThrottleResetAPITestCase):
 
 
 @override_settings(ORS_API_KEY='MOCK')
+class TripCheckTests(ThrottleResetAPITestCase):
+    """POST /api/trips/check/ — the pre-dispatch verdict endpoint."""
+
+    def setUp(self):
+        super().setUp()
+        self.jane = User.objects.create_user(username='jane', password='RoadTrip!2024')
+        self.client.force_authenticate(self.jane)
+
+    def test_requires_auth(self):
+        self.client.force_authenticate(None)
+        res = self.client.post('/api/trips/check/', TRIP_PAYLOAD, format='json')
+        self.assertEqual(res.status_code, 401)
+
+    def test_returns_a_verdict_with_reasoning(self):
+        res = self.client.post('/api/trips/check/', TRIP_PAYLOAD, format='json')
+        self.assertEqual(res.status_code, 200, res.data)
+        self.assertIn('is_compliant', res.data)
+        self.assertIn('overall_score', res.data)
+        self.assertIn('rules', res.data)
+        self.assertIn('distance_miles', res.data)
+        self.assertIn('estimated_driving_hours', res.data)
+        self.assertIn('projected_days', res.data)
+        self.assertIn('reasoning', res.data)
+        self.assertIn('summary', res.data['reasoning'])
+        self.assertIn('issues', res.data['reasoning'])
+
+    def test_does_not_create_a_trip_or_any_related_rows(self):
+        self.client.post('/api/trips/check/', TRIP_PAYLOAD, format='json')
+        self.assertEqual(Trip.objects.count(), 0)
+        self.assertEqual(DutyEvent.objects.count(), 0)
+        self.assertEqual(DailyLog.objects.count(), 0)
+
+    def test_logs_a_dispatch_check_audit_row(self):
+        self.assertEqual(DispatchCheck.objects.count(), 0)
+        res = self.client.post('/api/trips/check/', TRIP_PAYLOAD, format='json')
+        self.assertEqual(DispatchCheck.objects.count(), 1)
+        check = DispatchCheck.objects.get()
+        self.assertEqual(check.owner, self.jane)
+        self.assertEqual(check.is_compliant, res.data['is_compliant'])
+        self.assertEqual(check.pickup_location, TRIP_PAYLOAD['pickup_location'])
+        self.assertTrue(check.reasoning_summary)
+
+    def test_missing_required_field_returns_400(self):
+        payload = {**TRIP_PAYLOAD}
+        del payload['dropoff_location']
+        res = self.client.post('/api/trips/check/', payload, format='json')
+        self.assertEqual(res.status_code, 400)
+        self.assertEqual(Trip.objects.count(), 0)
+        self.assertEqual(DispatchCheck.objects.count(), 0)
+
+    def test_dispatch_check_is_logged_even_when_non_compliant(self):
+        # Way over cycle limit before the trip even starts.
+        payload = {**TRIP_PAYLOAD, 'cycle_used': 69.5}
+        res = self.client.post('/api/trips/check/', payload, format='json')
+        self.assertEqual(res.status_code, 200, res.data)
+        self.assertFalse(res.data['is_compliant'])
+        self.assertTrue(res.data['reasoning']['issues'])
+        check = DispatchCheck.objects.get()
+        self.assertFalse(check.is_compliant)
+
+
+@override_settings(ORS_API_KEY='MOCK')
 class LogPdfTests(ThrottleResetAPITestCase):
     def setUp(self):
         super().setUp()
@@ -165,6 +235,117 @@ class RoutingSafetyTests(ThrottleResetAPITestCase):
     def test_failed_trip_is_not_persisted(self):
         self.client.post('/api/trips/', TRIP_PAYLOAD, format='json')
         self.assertEqual(Trip.objects.count(), 0)
+
+
+@override_settings(ORS_API_KEY='MOCK')
+class DutyEventEditTests(ThrottleResetAPITestCase):
+    """Editing a generated schedule's duty events — the whole point being that
+    compliance and the daily logs must reflect the edit, not the original
+    idealized plan."""
+
+    def setUp(self):
+        super().setUp()
+        self.jane = User.objects.create_user(username='jane', password='RoadTrip!2024')
+        self.bob = User.objects.create_user(username='bob', password='RoadTrip!2024')
+        self.client.force_authenticate(self.jane)
+        self.trip = self.client.post('/api/trips/', TRIP_PAYLOAD, format='json').data
+        self.assertTrue(self.trip['compliance']['is_compliant'])
+
+    def _url(self, event_id=None):
+        base = f"/api/trips/{self.trip['id']}/duty-events/"
+        return base if event_id is None else f'{base}{event_id}/'
+
+    def _get_trip(self):
+        return self.client.get(f"/api/trips/{self.trip['id']}/").data
+
+    def test_duty_event_endpoints_require_auth(self):
+        self.client.force_authenticate(None)
+        self.assertEqual(self.client.get(self._url()).status_code, 401)
+
+    def test_events_are_scoped_to_the_owning_trip(self):
+        self.client.force_authenticate(self.bob)
+        self.assertEqual(self.client.get(self._url()).status_code, 404)
+
+        event_id = self.trip['duty_events'][0]['id']
+        self.assertEqual(self.client.get(self._url(event_id)).status_code, 404)
+        self.assertEqual(
+            self.client.patch(self._url(event_id), {'location': 'nope'}, format='json').status_code,
+            404,
+        )
+        self.assertEqual(self.client.delete(self._url(event_id)).status_code, 404)
+
+    def test_extending_a_driving_event_past_11_hours_breaks_compliance(self):
+        driving_event = next(e for e in self.trip['duty_events'] if e['status'] == 'DRIVING')
+        start = datetime.fromisoformat(driving_event['start_time'].replace('Z', '+00:00'))
+        # Deterministic relative to the event's own start, not wall-clock time.
+        blown_end_time = (start + timedelta(hours=12)).isoformat()
+
+        res = self.client.patch(
+            self._url(driving_event['id']), {'end_time': blown_end_time}, format='json'
+        )
+        self.assertEqual(res.status_code, 200, res.data)
+
+        trip = self._get_trip()
+        self.assertFalse(trip['compliance']['is_compliant'])
+        self.assertGreater(trip['compliance']['violation_count'], 0)
+        self.assertTrue(trip['compliance']['reasoning']['issues'])
+
+    def test_end_time_before_start_time_is_rejected(self):
+        event = self.trip['duty_events'][0]
+        res = self.client.patch(
+            self._url(event['id']),
+            {'start_time': event['end_time'], 'end_time': event['start_time']},
+            format='json',
+        )
+        self.assertEqual(res.status_code, 400)
+
+    def test_trip_field_cannot_be_spoofed(self):
+        bob_trip = None
+        self.client.force_authenticate(self.bob)
+        bob_trip = self.client.post('/api/trips/', TRIP_PAYLOAD, format='json').data
+        self.client.force_authenticate(self.jane)
+
+        event = self.trip['duty_events'][0]
+        res = self.client.patch(
+            self._url(event['id']), {'trip': bob_trip['id'], 'location': 'still janes'}, format='json'
+        )
+        self.assertEqual(res.status_code, 200, res.data)
+        self.assertEqual(DutyEvent.objects.get(pk=event['id']).trip_id, self.trip['id'])
+
+    def test_editing_an_event_regenerates_daily_logs_without_duplicates(self):
+        event = self.trip['duty_events'][0]
+        self.client.patch(self._url(event['id']), {'location': 'Edited Stop'}, format='json')
+
+        trip = self._get_trip()
+        dates = [log['date'] for log in trip['daily_logs']]
+        self.assertEqual(len(dates), len(set(dates)))
+        self.assertEqual(
+            DailyLog.objects.filter(trip_id=self.trip['id']).count(), len(trip['daily_logs'])
+        )
+
+    def test_deleting_an_event_regenerates_logs(self):
+        events = self.trip['duty_events']
+        res = self.client.delete(self._url(events[-1]['id']))
+        self.assertEqual(res.status_code, 204)
+        self.assertFalse(DutyEvent.objects.filter(pk=events[-1]['id']).exists())
+
+        trip = self._get_trip()
+        self.assertEqual(len(trip['duty_events']), len(events) - 1)
+
+    def test_adding_an_event_is_reflected_in_the_schedule(self):
+        last = self.trip['duty_events'][-1]
+        payload = {
+            'status': 'ON_DUTY_NOT_DRIVING',
+            'start_time': last['end_time'],
+            'end_time': last['end_time'][:11] + '23:59:59Z',
+            'location': 'Unplanned dock delay',
+        }
+        res = self.client.post(self._url(), payload, format='json')
+        self.assertEqual(res.status_code, 201, res.data)
+        self.assertEqual(DutyEvent.objects.get(pk=res.data['id']).trip_id, self.trip['id'])
+
+        trip = self._get_trip()
+        self.assertEqual(len(trip['duty_events']), len(self.trip['duty_events']) + 1)
 
 
 class HealthCheckTests(ThrottleResetAPITestCase):

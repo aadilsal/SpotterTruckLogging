@@ -1,8 +1,9 @@
 import { useState } from 'react';
 import axios from 'axios';
 import {
-  AlertCircle, ArrowLeft, CheckCircle2, Loader2, LogIn, ShieldCheck, Truck, UserPlus,
+  AlertCircle, ArrowLeft, CheckCircle2, Loader2, LogIn, ShieldCheck, UserPlus,
 } from 'lucide-react';
+import { LogoMark } from './Logo.tsx';
 import { useAuth } from '../lib/authContext';
 import { apiUrl, extractApiError } from '../lib/api';
 import { cn } from '../lib/utils';
@@ -178,7 +179,7 @@ export default function AuthScreen() {
   };
 
   return (
-    <div className="h-screen flex flex-col items-center justify-center overflow-y-auto bg-[#0a0a0c] text-zinc-100 font-sans px-6 py-10">
+    <div className="h-screen flex flex-col items-center justify-center overflow-y-auto bg-surface text-zinc-100 font-sans px-6 py-10">
       <div className="pointer-events-none fixed inset-0 z-0">
         <div className="absolute top-0 left-1/4 w-[600px] h-[400px] bg-blue-600/[0.04] rounded-full blur-[120px]" />
         <div className="absolute bottom-0 right-1/4 w-[500px] h-[300px] bg-indigo-600/[0.03] rounded-full blur-[100px]" />
@@ -186,13 +187,10 @@ export default function AuthScreen() {
 
       <div className="relative z-10 w-full max-w-sm animate-fade-in">
         <div className="flex flex-col items-center text-center mb-8">
-          <div className="relative mb-4">
-            <div className="absolute inset-0 bg-blue-500/30 rounded-xl blur-md" />
-            <div className="relative bg-gradient-to-br from-blue-500 to-blue-700 p-2.5 rounded-xl shadow-lg shadow-blue-500/20">
-              <Truck size={22} className="text-white" />
-            </div>
+          <div className="mb-4">
+            <LogoMark size={44} />
           </div>
-          <h1 className="text-lg font-semibold tracking-tight text-zinc-50">SpotterTruckLogger</h1>
+          <h1 className="text-lg font-semibold tracking-tight text-zinc-50">RunLegal</h1>
           <p className="text-[10px] text-zinc-500 font-medium tracking-wide uppercase mt-1">
             FMCSA Compliance Suite
           </p>
